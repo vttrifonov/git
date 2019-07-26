@@ -472,7 +472,8 @@ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt
 		}
 		options |= PCRE2_CASELESS;
 	}
-	if (!opt->ignore_locale && is_utf8_locale() && has_non_ascii(p->pattern))
+	if (!opt->ignore_locale && is_utf8_locale() && has_non_ascii(p->pattern) &&
+	    !(!opt->ignore_case && (p->fixed || p->is_fixed)))
 		options |= PCRE2_UTF;
 
 	p->pcre2_pattern = pcre2_compile((PCRE2_SPTR)p->pattern,
@@ -606,7 +607,6 @@ static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
 {
 	int err;
 	int regflags = REG_NEWLINE;
-	int pat_is_fixed;
 
 	p->word_regexp = opt->word_regexp;
 	p->ignore_case = opt->ignore_case;
@@ -615,11 +615,21 @@ static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
 	if (memchr(p->pattern, 0, p->patternlen) && !opt->pcre2)
 		die(_("given pattern contains NULL byte (via -f <file>). This is only supported with -P under PCRE v2"));
 
-	pat_is_fixed = is_fixed(p->pattern, p->patternlen);
-	if (opt->fixed || pat_is_fixed) {
+	p->is_fixed = is_fixed(p->pattern, p->patternlen);
+#ifdef USE_LIBPCRE2
+       if (!p->fixed && !p->is_fixed) {
+	       const char *no_jit = "(*NO_JIT)";
+	       const int no_jit_len = strlen(no_jit);
+	       if (starts_with(p->pattern, no_jit) &&
+		   is_fixed(p->pattern + no_jit_len,
+			    p->patternlen - no_jit_len))
+		       p->is_fixed = 1;
+       }
+#endif
+	if (p->fixed || p->is_fixed) {
 #ifdef USE_LIBPCRE2
 		opt->pcre2 = 1;
-		if (pat_is_fixed) {
+		if (p->is_fixed) {
 			compile_pcre2_pattern(p, opt);
 		} else {
 			/*
